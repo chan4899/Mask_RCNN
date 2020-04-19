@@ -2046,6 +2046,8 @@ class MaskRCNN():
                 [target_bbox, target_class_ids, mrcnn_bbox])
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
+            attr_loss = KL.Lambda(lambda x: mrcnn_attr_loss_graph(*x), name="mrcnn_attr_loss")(
+                [target_attr_ids, target_class_ids, mrcnn_attr_probs])   # TODO: over here.. for CA
 
             # Model
             inputs = [input_image, input_image_meta,
