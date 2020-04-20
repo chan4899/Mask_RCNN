@@ -1195,12 +1195,12 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
         target_attr_one_hot[i] = tf.keras.utils.to_categorical(list(target_attr_ids[i]), num_classes = K.int_shape(mrcnn_attr_probs)[2], dtype = tf.int32).sum(axis=0)
 
     # Gather the deltas (predicted and true) that contribute to loss
-    target_bbox = tf.gather(target_bbox, positive_roi_ix)
-    pred_bbox = tf.gather_nd(pred_bbox, indices)
+    target_attr_one_hot = tf.gather(target_attr_one_hot, positive_roi_ix)
+    mrcnn_attr_probs = tf.gather_nd(mrcnn_attr_probs, indices)
 
     # Smooth-L1 Loss
-    loss = K.switch(tf.size(target_bbox) > 0,
-                    smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
+    loss = K.switch(tf.size(target_attr_one_hot) > 0,
+                    K.binary_crossentropy(target=target_attr_one_hot, output=mrcnn_attr_probs),
                     tf.constant(0.0))
     loss = K.mean(loss)
     return loss
@@ -2096,11 +2096,11 @@ class MaskRCNN():
 
             # Model
             inputs = [input_image, input_image_meta,
-                      input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
+                      input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks, input_gt_attr_ids]
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
-                       mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
+                       mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask, mrcnn_attr_probs,
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             model = KM.Model(inputs, outputs, name='mask_rcnn')
