@@ -279,7 +279,7 @@ def draw_box(image, box, color):
     return image
 
 
-def display_top_masks(image, mask, class_ids, attr_ids, class_names, attr_names, limit=4):
+def display_top_masks(image, mask, class_ids, attr_ids, class_names, attr_names, limit=4):       ## Updated by CA for FGC
     """Display the given image and the top few class masks."""
     print("limit", limit)
     to_display = []
