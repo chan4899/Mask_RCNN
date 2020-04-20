@@ -651,6 +651,7 @@ class DetectionTargetLayer(KE.Layer):
     target_mask: [batch, TRAIN_ROIS_PER_IMAGE, height, width]
                  Masks cropped to bbox boundaries and resized to neural
                  network output size.
+    target_attr_ids = [batch, TRAIN_ROIS_PER_IMAGE, (10 attributes)]
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -932,6 +933,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
         probs: [batch, num_rois, NUM_CLASSES] classifier probabilities
         bbox_deltas: [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))] Deltas to apply to
                      proposal boxes
+        mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
     """
     # ROI Pooling
     # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
@@ -1161,6 +1163,49 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     return loss
 
 
+def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
+    """MUlti Label Loss for attributes clasification.
+
+    target_attr_ids: [batch, num_rois, (10 attributes)]
+    target_class_ids: [batch, num_rois]. Integer class IDs.
+    mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
+    """
+
+
+
+
+
+    # Reshape to merge batch and roi dimensions for simplicity.
+    target_class_ids = K.reshape(target_class_ids, (-1,))
+    target_attr_ids = K.reshape(target_attr_ids, (-1, 10))
+    mrcnn_attr_probs = K.reshape(mrcnn_attr_probs, (-1, K.int_shape(mrcnn_attr_probs)[2]))
+
+    # Only positive ROIs contribute to the loss. And only
+    # the right class_id of each ROI. Get their indices.
+    positive_roi_ix = tf.where(target_class_ids > 0 & target_attr_ids[:, 0]!= -1)[:, 0]
+    positive_roi_class_ids = tf.cast(
+        tf.gather(target_class_ids, positive_roi_ix), tf.int64)
+    indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
+
+    ## target_attr_ids to one hot vector
+    target_attr_one_hot = tf.zeros(K.int_shape(mrcnn_attr_probs), tf.int32)
+    for i in range(K.int_shape(target_attr_one_hot)[0]):
+        if target_attr_ids[i][0] == -1:
+            continue
+        target_attr_one_hot[i] = tf.keras.utils.to_categorical(list(target_attr_ids[i]), num_classes = K.int_shape(mrcnn_attr_probs)[2], dtype = tf.int32).sum(axis=0)
+
+    # Gather the deltas (predicted and true) that contribute to loss
+    target_bbox = tf.gather(target_bbox, positive_roi_ix)
+    pred_bbox = tf.gather_nd(pred_bbox, indices)
+
+    # Smooth-L1 Loss
+    loss = K.switch(tf.size(target_bbox) > 0,
+                    smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
+                    tf.constant(0.0))
+    loss = K.mean(loss)
+    return loss
+
+
 def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     """Mask binary cross-entropy loss for the masks head.
 
@@ -1201,7 +1246,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 
 
 ############################################################
-#  Data Generator
+#  Data Generator                                           
 ############################################################
 
 def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
