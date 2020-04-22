@@ -30,9 +30,7 @@ from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
-# tf.compat.v1.enable_eager_execution(
-#     config=None, device_policy=None, execution_mode=None
-# )
+# tf.compat.v1.enable_eager_execution()
 
 
 ############################################################
@@ -2014,6 +2012,8 @@ class MaskRCNN():
         else:
             anchors = input_anchors
 
+
+        
         # RPN Model
         rpn = build_rpn_model(config.RPN_ANCHOR_STRIDE,
                               len(config.RPN_ANCHOR_RATIOS), config.TOP_DOWN_PYRAMID_SIZE)
@@ -2089,6 +2089,7 @@ class MaskRCNN():
             print(target_attr_ids)
 
             # Losses
+
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
@@ -2099,8 +2100,12 @@ class MaskRCNN():
                 [target_bbox, target_class_ids, mrcnn_bbox])
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
-            # attr_loss = KL.Lambda(lambda x: mrcnn_attr_loss_graph(*x), name="mrcnn_attr_loss")(
-            #     [target_attr_ids, target_class_ids, mrcnn_attr_probs])   # TODO: over here.. for CA
+
+
+            
+            attr_loss = KL.Lambda(lambda x: mrcnn_attr_loss_graph(*x), name="mrcnn_attr_loss")(
+                [target_attr_ids, target_class_ids, mrcnn_attr_probs])   # TODO: over here.. for CA
+            # tf.compat.v1.disable_eager_execution()
 
             # Model
             inputs = [input_image, input_image_meta,
@@ -2110,7 +2115,7 @@ class MaskRCNN():
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask, mrcnn_attr_probs,
                        rpn_rois, output_rois,
-                       rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
+                       rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss, attr_loss]
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
             # Network Heads
@@ -2248,7 +2253,7 @@ class MaskRCNN():
         self.keras_model._per_input_losses = {}
         loss_names = [
             "rpn_class_loss",  "rpn_bbox_loss",
-            "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+            "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss", "mrcnn_attr_loss"]
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
