@@ -495,7 +495,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_attr
     gt_class_ids: [MAX_GT_INSTANCES] int class IDs
     gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
     gt_masks: [height, width, MAX_GT_INSTANCES] of boolean type.
-    gt_attr_ids: [MAX_GT_INSTANCES, (attr1, attr2, ... , attr10)]   int attribute ids
+    gt_attr_ids: [MAX_GT_INSTANCES, [num_attr dimensional one hot vector]]   int attribute ids
 
     Returns: Target ROIs and corresponding class IDs, bounding box shifts,
     and masks.
@@ -504,7 +504,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_attr
     deltas: [TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw))]
     masks: [TRAIN_ROIS_PER_IMAGE, height, width]. Masks cropped to bbox
            boundaries and resized to neural network output size.
-    attr_ids: [TRAIN_ROIS_PER_IMAGE, (10 attributes)]. Integer attr IDs. Zero padded.    ## for FGC
+    attr_ids: [TRAIN_ROIS_PER_IMAGE, [num_attr dimensional one hot vector]]. Integer attr IDs. Zero padded.    ## for FGC
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -686,11 +686,11 @@ class DetectionTargetLayer(KE.Layer):
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
             (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
              self.config.MASK_SHAPE[1]),  # masks
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, 10) #attr_ids     ##added by CA for FGC
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.NUM_ATTR) #attr_ids     ##added by CA for FGC
         ]
 
     def compute_mask(self, inputs, mask=None):
-        return [None, None, None, None, None]
+        return [None, None, None, None, None]   ## Fifth None is added for the attributes
 
 
 ############################################################
@@ -1120,6 +1120,9 @@ def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
     #       images in a batch have the same active_class_ids
     pred_active = tf.gather(active_class_ids[0], pred_class_ids)
 
+    # print("target_class_ids_shape", target_class_ids.get_shape())
+    print("pred_class_logits_shape", pred_class_logits.get_shape())
+
     # Loss
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=target_class_ids, logits=pred_class_logits)
@@ -1173,15 +1176,17 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
     mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
     """
 
-
+    print("shapes_from_attr_loss ", target_attr_ids.get_shape(), mrcnn_attr_probs.get_shape())
 
 
 
     # Reshape to merge batch and roi dimensions for simplicity.
     target_class_ids = K.reshape(target_class_ids, (-1,))
-    target_attr_ids = K.reshape(target_attr_ids, (-1, 10))
+    target_attr_ids = K.reshape(target_attr_ids, (-1, K.int_shape(mrcnn_attr_probs)[2]))
     mrcnn_attr_probs = K.reshape(mrcnn_attr_probs, (-1, K.int_shape(mrcnn_attr_probs)[2]))
-
+    # print("target_class_ids_shape", target_class_ids.get_shape())
+    # print("target_attr_ids_shape", target_attr_ids.get_shape())
+    # print("mrcnn_attr_probs_shape", mrcnn_attr_probs.get_shape())
     # Only positive ROIs contribute to the loss. And only
     # the right class_id of each ROI. Get their indices.
     positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
@@ -1190,19 +1195,19 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
     indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
 
     ## target_attr_ids to one hot vector
-    target_attr_one_hot = tf.zeros(K.int_shape(mrcnn_attr_probs), tf.int32)
-    for i in range(K.int_shape(target_attr_one_hot)[0]):
-        if target_attr_ids[i][0] == -1:
-            continue
-        target_attr_one_hot[i] = tf.keras.utils.to_categorical(list(target_attr_ids[i]), num_classes = K.int_shape(mrcnn_attr_probs)[2], dtype = tf.int32).sum(axis=0)
+    # a = mrcnn_attr_probs.get_shape()
+    # print("a", a)
+    
+    target_attr_ids = tf.cast(target_attr_ids, dtype = tf.float32)
 
     # Gather the deltas (predicted and true) that contribute to loss
-    target_attr_one_hot = tf.gather(target_attr_one_hot, positive_roi_ix)
+    target_attr_ids = tf.gather(target_attr_ids, positive_roi_ix)
     mrcnn_attr_probs = tf.gather_nd(mrcnn_attr_probs, indices)
-
-    # Smooth-L1 Loss
-    loss = K.switch(tf.size(target_attr_one_hot) > 0,
-                    K.binary_crossentropy(target=target_attr_one_hot, output=mrcnn_attr_probs),
+    print("size ", tf.size(target_attr_ids))
+    # categorical_loss
+    print(target_attr_ids.dtype, mrcnn_attr_probs.dtype )
+    loss = K.switch(tf.size(target_attr_ids) > 0,
+                    K.binary_crossentropy(target=target_attr_ids, output=mrcnn_attr_probs),
                     tf.constant(0.0))
     loss = K.mean(loss)
     return loss
@@ -1959,7 +1964,7 @@ class MaskRCNN():
             # 4. GT Attribute IDS
             #[batch, MAX_GT_INSTANCES, (attr1, attr2, ...... , attr10)]   ## we consider that no object will have more than 10 attributes. We will put -1 to padd it to 10
             input_gt_attr_ids = KL.Input(
-                shape=[None, 10], name="input_gt_attr_ids", dtype=tf.int32)
+                shape=[None, config.NUM_ATTR], name="input_gt_attr_ids", dtype=tf.int32)
 
 
         elif mode == "inference":
@@ -2100,9 +2105,6 @@ class MaskRCNN():
                 [target_bbox, target_class_ids, mrcnn_bbox])
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
-
-
-            
             attr_loss = KL.Lambda(lambda x: mrcnn_attr_loss_graph(*x), name="mrcnn_attr_loss")(
                 [target_attr_ids, target_class_ids, mrcnn_attr_probs])   # TODO: over here.. for CA
             # tf.compat.v1.disable_eager_execution()
